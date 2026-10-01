@@ -1,1 +1,200 @@
+<!doctype html>
+<html lang="ur">
+<head>
+  <meta charset="utf-8">
+  <title>Duniya ke Aham Topics</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { margin: 0; background: #0f1419; color: #e6e6e6; font-family: system-ui, -apple-system, sans-serif; }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 22px; margin: 8px 0; color: #ffffff; }
+    .meta { color: #8a97a6; font-size: 13px; margin: 8px 0 14px; }
+    .card { background: #161d26; border-radius: 12px; padding: 14px; margin-bottom: 12px; border: 1px solid #222c38; }
+    .card h2 { font-size: 18px; margin: 0 0 4px; color: #5cc8ff; }
+    .badge { font-size: 12px; color: #ffb347; margin-bottom: 8px; }
+    .card a { display: block; color: #e6e6e6; text-decoration: none; font-size: 14px; padding: 6px 0; border-top: 1px solid #222c38; }
+    .card a:hover { color: #5cc8ff; }
+    .card a span { color: #8a97a6; font-size: 12px; }
+    .loading { text-align: center; padding: 20px; color: #5cc8ff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Duniya ke Aham Topics</h1>
+    <div class="meta" id="meta">Research ho rahi hai...</div>
+    <div id="list"><div class="loading">Khabrein aur topics analyze ho rahe hain...</div></div>
+  </div>
 
+  <script>
+    const FEEDS = {
+      "BBC": "https://api.allorigins.win/raw?url=" + encodeURIComponent("http://feeds.bbci.co.uk/news/world/rss.xml"),
+      "Al Jazeera": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.aljazeera.com/xml/rss/all.xml"),
+      "Guardian": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.theguardian.com/world/rss"),
+      "NYTimes": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
+      "Dawn": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.dawn.com/feeds/home")
+    };
+
+    const STOP = new Set([
+      "the","and","for","with","from","that","this","have","has","had","will","would","could","should","about","after","over","into","amid",
+      "says","say","said","what","when","where","which","while","their","they","them","than","then","also","just","still","back","more",
+      "most","been","being","were","was","are","not","but","its","his","her","our","your","you","who","why","how","new","news","live","latest",
+      "first","last","year","years","week","weeks","day","days","time","report","reports","reportedly","according","video","photos",
+      "watch","update","updates","people","world","one","two","three"
+    ]);
+
+    function getTerms(title) {
+      const words = (title.match(/[A-Za-z][A-Za-z'\-]+/g) || []).map(w => w.toLowerCase());
+      const out = new Set();
+      words.forEach(w => {
+        if (!STOP.has(w) && w.length >= 4) out.add(w);
+      });
+      for (let i = 0; i < words.length - 1; i++) {
+        const a = words[i], b = words[i+1];
+        if (!STOP.has(a) && !STOP.has(b) && a.length >= 3 && b.length >= 3) {
+          out.add(a + " " + b);
+        }
+      }
+      return Array.from(out);
+    }
+
+    async function fetchFeed(src, url) {
+      const res = await fetch(url);
+      const text = await res.text();
+      const parser = new DOMParser();
+      const xml = parser.parseFromString(text, "text/xml");
+      const items = [];
+      const xmlItems = xml.querySelectorAll("item, entry");
+      xmlItems.forEach(it => {
+        const titleEl = it.querySelector("title");
+        const linkEl = it.querySelector("link");
+        const title = titleEl ? titleEl.textContent.trim() : "";
+        let link = "";
+        if (linkEl) {
+          link = linkEl.textContent.trim() || linkEl.getAttribute("href") || "";
+        }
+        if (title) items.push({ title, link, source: src });
+      });
+      return items.slice(0, 40);
+    }
+
+    async function analyze() {
+      const byTerm = {};
+      const ok = [], fail = [];
+
+      for (const [src, url] of Object.entries(FEEDS)) {
+        try {
+          const items = await fetchFeed(src, url);
+          if (items.length > 0) ok.push(src);
+          else fail.push(src);
+
+          items.forEach(item => {
+            const terms = getTerms(item.title);
+            terms.forEach(t => {
+              if (!byTerm[t]) byTerm[t] = [];
+              byTerm[t].push(item);
+            });
+          });
+        } catch (e) {
+          fail.push(src);
+        }
+      }
+
+      const ranked = [];
+      for (const [term, hs] of Object.entries(byTerm)) {
+        const srcs = new Set(hs.map(h => h.source));
+        const titles = new Set(hs.map(h => h.title));
+        if (srcs.size >= 2) {
+          ranked.push({
+            srcCount: srcs.size,
+            titleCount: titles.size,
+            wordCount: term.split(" ").length,
+            term: term,
+            headlines: hs
+          });
+        }
+      }
+
+      ranked.sort((a, b) => {
+        if (b.srcCount !== a.srcCount) return b.srcCount - a.srcCount;
+        if (b.titleCount !== a.titleCount) return b.titleCount - a.titleCount;
+        return b.wordCount - a.wordCount;
+      });
+
+      const topics = [];
+      const used = [];
+
+      for (const r of ranked) {
+        const key = new Set(r.headlines.map(h => h.title));
+        const isSubset = used.some(u => Array.from(key).every(x => u.has(x)));
+        if (isSubset) continue;
+        used.push(key);
+
+        const seen = new Set();
+        const heads = [];
+        r.headlines.forEach(h => {
+          if (!seen.has(h.title)) {
+            seen.add(h.title);
+            heads.push(h);
+          }
+        });
+
+        const topicName = r.term.replace(/\b\w/g, c => c.toUpperCase());
+        topics.push({
+          topic: topicName,
+          sources: r.srcCount,
+          count: r.titleCount,
+          headlines: heads.slice(0, 5)
+        });
+
+        if (topics.length >= 12) break;
+      }
+
+      render(topics, ok, fail);
+    }
+
+    function render(topics, ok, fail) {
+      const list = document.getElementById('list');
+      const meta = document.getElementById('meta');
+      list.innerHTML = '';
+
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      meta.textContent = `Aakhri update: ${now} | Sources: ${ok.join(', ')}` + (fail.length ? ` | Nahi mile: ${fail.length}` : '');
+
+      if (topics.length === 0) {
+        list.innerHTML = '<div class="card">Koi aham topic nahi mila ya feeds load nahi ho sake.</div>';
+        return;
+      }
+
+      topics.forEach(t => {
+        const c = document.createElement('div');
+        c.className = 'card';
+        
+        const h = document.createElement('h2');
+        h.textContent = t.topic;
+        c.appendChild(h);
+
+        const b = document.createElement('div');
+        b.className = 'badge';
+        b.textContent = `${t.sources} sources | ${t.count} khabrein`;
+        c.appendChild(b);
+
+        t.headlines.forEach(x => {
+          const a = document.createElement('a');
+          a.target = '_blank';
+          if (/^https?:/.test(x.link)) a.href = x.link;
+          a.textContent = x.title + ' ';
+          
+          const s = document.createElement('span');
+          s.textContent = '(' + x.source + ')';
+          a.appendChild(s);
+          c.appendChild(a);
+        });
+
+        list.appendChild(c);
+      });
+    }
+
+    analyze();
+  </script>
+</body>
+</html>
