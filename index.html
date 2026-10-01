@@ -27,11 +27,11 @@
 
   <script>
     const FEEDS = {
-      "BBC": "https://api.allorigins.win/raw?url=" + encodeURIComponent("http://feeds.bbci.co.uk/news/world/rss.xml"),
-      "Al Jazeera": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.aljazeera.com/xml/rss/all.xml"),
-      "Guardian": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.theguardian.com/world/rss"),
-      "NYTimes": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
-      "Dawn": "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.dawn.com/feeds/home")
+      "BBC": "https://api.rss2json.com/v1/api.json?rss_url=http%3A%2F%2Ffeeds.bbci.co.uk%2Fnews%2Fworld%2Frss.xml",
+      "Al Jazeera": "https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.aljazeera.com%2Fxml%2Frss%2Fall.xml",
+      "Guardian": "https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.theguardian.com%2Fworld%2Frss",
+      "NYTimes": "https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Frss.nytimes.com%2Fservices%2Fxml%2Frss%2Fnyt%2FWorld.xml",
+      "Dawn": "https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.dawn.com%2Ffeeds%2Fhome"
     };
 
     const STOP = new Set([
@@ -59,22 +59,13 @@
 
     async function fetchFeed(src, url) {
       const res = await fetch(url);
-      const text = await res.text();
-      const parser = new DOMParser();
-      const xml = parser.parseFromString(text, "text/xml");
-      const items = [];
-      const xmlItems = xml.querySelectorAll("item, entry");
-      xmlItems.forEach(it => {
-        const titleEl = it.querySelector("title");
-        const linkEl = it.querySelector("link");
-        const title = titleEl ? titleEl.textContent.trim() : "";
-        let link = "";
-        if (linkEl) {
-          link = linkEl.textContent.trim() || linkEl.getAttribute("href") || "";
-        }
-        if (title) items.push({ title, link, source: src });
-      });
-      return items.slice(0, 40);
+      const data = await res.json();
+      if (data.status !== 'ok' || !data.items) return [];
+      return data.items.map(it => ({
+        title: (it.title || '').trim(),
+        link: (it.link || '').trim(),
+        source: src
+      })).filter(x => x.title).slice(0, 40);
     }
 
     async function analyze() {
@@ -84,16 +75,18 @@
       for (const [src, url] of Object.entries(FEEDS)) {
         try {
           const items = await fetchFeed(src, url);
-          if (items.length > 0) ok.push(src);
-          else fail.push(src);
-
-          items.forEach(item => {
-            const terms = getTerms(item.title);
-            terms.forEach(t => {
-              if (!byTerm[t]) byTerm[t] = [];
-              byTerm[t].push(item);
+          if (items.length > 0) {
+            ok.push(src);
+            items.forEach(item => {
+              const terms = getTerms(item.title);
+              terms.forEach(t => {
+                if (!byTerm[t]) byTerm[t] = [];
+                byTerm[t].push(item);
+              });
             });
-          });
+          } else {
+            fail.push(src);
+          }
         } catch (e) {
           fail.push(src);
         }
@@ -161,7 +154,7 @@
       meta.textContent = `Aakhri update: ${now} | Sources: ${ok.join(', ')}` + (fail.length ? ` | Nahi mile: ${fail.length}` : '');
 
       if (topics.length === 0) {
-        list.innerHTML = '<div class="card">Koi aham topic nahi mila ya feeds load nahi ho sake.</div>';
+        list.innerHTML = '<div class="card">Koi aham common topic nahi mila. Multi-source matching run ho rahi hai.</div>';
         return;
       }
 
